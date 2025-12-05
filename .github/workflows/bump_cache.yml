@@ -3,7 +3,8 @@ name: Check Cached Release Cycle
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 14 14 1,4,7,10 *"
+    # EOLs are currently scheduled for 20xx-10-01
+    - cron: "0 14 2 1,4,7,10 *"
 
 jobs:
   bump-cache:
@@ -40,12 +41,14 @@ jobs:
           echo EOF
         } >> "$GITHUB_OUTPUT"
 
-    - name: Open Issue If Bumped
-      if: ${{ steps.bump.outputs.RES != ''}}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        today=$(date +"%Y-%m-%d")
-        gh issue create \
-          --title "($today) Release Cycle Cache Outdated" \
-          --body '\`\`\`diff\n${{ steps.report.outputs.RES }}\n\`\`\`'
+    - name: Set Date
+      id: date
+      run:
+        echo "today=$(date +"%Y-%m-%d")" >> "$GITHUB_OUTPUT"
+
+    - name: Create Pull Request If Bumped
+      uses: peter-evans/create-pull-request@v7
+      with:
+        branch: "bump-cache"
+        title: "chore: update release cycle cache (${{ steps.date.outputs.today }})"
+        commit-message: "chore: update release cycle cache (${{ steps.date.outputs.today }})"
