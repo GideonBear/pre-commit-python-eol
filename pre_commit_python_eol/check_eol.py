@@ -160,7 +160,7 @@ def check_python_support(
 def main(argv: abc.Sequence[str] | None = None) -> int:  # noqa: D103
     parser = argparse.ArgumentParser()
     parser.add_argument("filenames", nargs="*", type=Path)
-    parser.add_argument("--cached", action="set_true")
+    parser.add_argument("--cached", action="store_true")
     args = parser.parse_args(argv)
 
     ec = 0
