@@ -1,8 +1,12 @@
 import json
 import platform
-from pathlib import Path
 
 from pre_commit_python_eol import __url__, __version__
+from pre_commit_python_eol.check_eol import CACHED_EOL_VERSIONS as LOCAL_CACHE_EOL_VERSIONS
+from pre_commit_python_eol.check_eol import CACHED_RELEASE_CYCLE as LOCAL_CACHE_CYCLE
+from pre_commit_python_eol.check_eol import (
+    get_eol_versions,
+)
 
 try:
     import httpx
@@ -18,10 +22,9 @@ USER_AGENT = (
 )
 
 CACHE_SOURCE = "https://peps.python.org/api/release-cycle.json"
-LOCAL_CACHE = Path("./pre_commit_python_eol/cached_release_cycle.json")
 
 
-def bump_cache() -> None:
+def bump_cached_release_cycle() -> None:
     """Update the cached release cycle JSON from the source repository."""
     with httpx.Client(headers={"User-Agent": USER_AGENT}) as client:
         r = client.get(CACHE_SOURCE)
@@ -29,10 +32,20 @@ def bump_cache() -> None:
 
         rj = r.json()
 
-    with LOCAL_CACHE.open("w", encoding="utf8") as f:
+    with LOCAL_CACHE_CYCLE.open("w", encoding="utf8") as f:
         json.dump(rj, f, indent=2, ensure_ascii=False)
         f.write("\n")  # Add in trailing newline
 
 
+def bump_cached_eol_versions() -> None:
+    """Update the cached EOL versions JSON from the source repository."""
+    eol_versions = dict(version.to_json() for version in get_eol_versions())
+
+    with LOCAL_CACHE_EOL_VERSIONS.open("w", encoding="utf8") as f:
+        json.dump(eol_versions, f, indent=2, ensure_ascii=False)
+        f.write("\n")  # Add in trailing newline
+
+
 if __name__ == "__main__":
-    bump_cache()
+    bump_cached_release_cycle()
+    bump_cached_eol_versions()

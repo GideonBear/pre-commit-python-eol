@@ -14,7 +14,9 @@ from pathlib import Path
 
 from packaging import specifiers, version
 
-CACHED_RELEASE_CYCLE = Path(__file__).parent / "cached_release_cycle.json"
+HERE = Path(__file__).parent
+CACHED_RELEASE_CYCLE = HERE / "cached_release_cycle.json"
+CACHED_EOL_VERSIONS = HERE / "cached_eol_versions.json"
 
 
 class EOLPythonError(Exception): ...  # noqa: D101
@@ -81,8 +83,15 @@ class PythonRelease:  # noqa: D101
             end_of_life=_parse_eol_date(metadata["end_of_life"]),
         )
 
+    def to_json(self) -> tuple[str, dict[str, str]]:
+        """Recreates the original JSON object from the `PythonRelease` instance."""
+        return str(self.python_ver), {
+            "status": self.status.value,
+            "end_of_life": self.end_of_life.isoformat(),
+        }
 
-def _get_cached_release_cycle(cache_json: Path) -> list[PythonRelease]:
+
+def _get_cached_release_cycle(cache_json: Path = CACHED_RELEASE_CYCLE) -> list[PythonRelease]:
     """
     Parse the locally cached Python release cycle into `PythonRelease` instance(s).
 
@@ -100,7 +109,27 @@ def _get_cached_release_cycle(cache_json: Path) -> list[PythonRelease]:
     )
 
 
-def check_python_support(toml_file: Path, cache_json: Path = CACHED_RELEASE_CYCLE) -> None:
+def get_cached_eol_versions() -> abc.Iterator[PythonRelease]:
+    """Parse the locally cached EOL Python versions into `PythonRelease` instance(s)."""
+    with CACHED_EOL_VERSIONS.open("r", encoding="utf-8") as f:
+        contents = json.load(f)
+
+    return (PythonRelease.from_json(v, m) for v, m in contents.items())
+
+
+def get_eol_versions(cache_json: Path = CACHED_RELEASE_CYCLE) -> abc.Iterator[PythonRelease]:
+    """Enumerate all EOL Python versions."""
+    release_cycle = _get_cached_release_cycle(cache_json)
+    utc_today = dt.datetime.now(dt.timezone.utc).date()
+
+    for r in release_cycle:
+        if r.status == ReleasePhase.EOL or r.end_of_life <= utc_today:
+            yield r
+
+
+def check_python_support(
+    toml_file: Path, *, cached: bool = False, cache_json: Path = CACHED_RELEASE_CYCLE
+) -> None:
     """
     Check the input TOML's `requires-python` for overlap with EOL Python version(s).
 
@@ -115,19 +144,12 @@ def check_python_support(toml_file: Path, cache_json: Path = CACHED_RELEASE_CYCL
         raise RequiresPythonNotFoundError
 
     package_spec = specifiers.SpecifierSet(requires_python)
-    release_cycle = _get_cached_release_cycle(cache_json)
-    utc_today = dt.datetime.now(dt.timezone.utc).date()
 
-    eol_supported = []
-    for r in release_cycle:
-        if r.python_ver in package_spec:
-            if r.status == ReleasePhase.EOL:
-                eol_supported.append(r)
-                continue
-
-            if r.end_of_life <= utc_today:
-                eol_supported.append(r)
-                continue
+    if cached:
+        eol_versions = get_cached_eol_versions()
+    else:
+        eol_versions = get_eol_versions(cache_json)
+    eol_supported = [version for version in eol_versions if version.python_ver in package_spec]
 
     if eol_supported:
         eol_supported.sort(key=attrgetter("python_ver"))  # Sort ascending for error msg generation
@@ -138,12 +160,13 @@ def check_python_support(toml_file: Path, cache_json: Path = CACHED_RELEASE_CYCL
 def main(argv: abc.Sequence[str] | None = None) -> int:  # noqa: D103
     parser = argparse.ArgumentParser()
     parser.add_argument("filenames", nargs="*", type=Path)
+    parser.add_argument("--cached", action="set_true")
     args = parser.parse_args(argv)
 
     ec = 0
     for file in args.filenames:
         try:
-            check_python_support(file)
+            check_python_support(file, cached=args.cached)
         except EOLPythonError as e:
             print(f"{file}: {e}")
             ec = 1
