@@ -50,6 +50,21 @@ def test_python_release_from_json() -> None:
     assert PythonRelease.from_json("3.14", metadata=sample_metadata) == truth_rel
 
 
+def test_python_release_to_json() -> None:
+    sample_rel = PythonRelease(
+        python_ver=version.Version("3.14"),
+        status=ReleasePhase.PRERELEASE,
+        end_of_life=dt.date(year=2030, month=10, day=1),
+    )
+
+    truth_metadata = {
+        "status": "prerelease",
+        "end_of_life": "2030-10-01",
+    }
+
+    assert sample_rel.to_json() == ("3.14", truth_metadata)
+
+
 #  Intentionally out of expected order so sorting can be checked
 SAMPLE_JSON = """\
 {
@@ -123,13 +138,29 @@ RELEASE_CACHE_WITH_EOL = """\
 }
 """
 
+EOL_VERSIONS_CACHE_WITH_EOL = """\
+{
+  "3.8": {
+    "status": "end-of-life",
+    "end_of_life": "2024-10-07"
+  },
+  "3.7": {
+    "status": "end-of-life",
+    "end_of_life": "2023-06-27"
+  }
+}
+"""
+
 
 @pytest.fixture
-def path_with_cache(tmp_path: Path) -> tuple[Path, Path]:
-    json_file = tmp_path / "cache.json"
-    json_file.write_text(RELEASE_CACHE_WITH_EOL)
+def path_with_caches(tmp_path: Path) -> tuple[Path, Path, Path]:
+    cycle_json_file = tmp_path / "cycle_cache.json"
+    eol_versions_json_file = tmp_path / "eol_versions_cache.json"
 
-    return tmp_path, json_file
+    cycle_json_file.write_text(RELEASE_CACHE_WITH_EOL)
+    eol_versions_json_file.write_text(EOL_VERSIONS_CACHE_WITH_EOL)
+
+    return tmp_path, cycle_json_file, eol_versions_json_file
 
 
 SAMPLE_PYPROJECT_NO_VERSION = """\
@@ -137,13 +168,17 @@ SAMPLE_PYPROJECT_NO_VERSION = """\
 """
 
 
-def test_check_python_no_version_spec_raises(path_with_cache: tuple[Path, Path]) -> None:
-    base_path, cache_path = path_with_cache
+def test_check_python_no_version_spec_raises(path_with_caches: tuple[Path, Path, Path]) -> None:
+    base_path, cycle_cache_path, eol_versions_cache_path = path_with_caches
     pyproject = base_path / "pyproject.toml"
     pyproject.write_text(SAMPLE_PYPROJECT_NO_VERSION)
 
     with pytest.raises(RequiresPythonNotFoundError):
-        check_python_support(pyproject, cache_json=cache_path)
+        check_python_support(
+            pyproject,
+            cycle_cache_json=cycle_cache_path,
+            eol_versions_cache_json=eol_versions_cache_path,
+        )
 
 
 SAMPLE_PYPROJECT_NO_EOL = """\
@@ -152,13 +187,17 @@ requires-python = ">=3.11"
 """
 
 
-def test_check_python_support_no_eol(path_with_cache: tuple[Path, Path]) -> None:
-    base_path, cache_path = path_with_cache
+def test_check_python_support_no_eol(path_with_caches: tuple[Path, Path, Path]) -> None:
+    base_path, cycle_cache_path, eol_versions_cache_path = path_with_caches
     pyproject = base_path / "pyproject.toml"
     pyproject.write_text(SAMPLE_PYPROJECT_NO_EOL)
 
     with time_machine.travel(dt.date(year=2025, month=5, day=1)):
-        check_python_support(pyproject, cache_json=cache_path)
+        check_python_support(
+            pyproject,
+            cycle_cache_json=cycle_cache_path,
+            eol_versions_cache_json=eol_versions_cache_path,
+        )
 
 
 SAMPLE_PYPROJECT_SINGLE_EOL = """\
@@ -167,14 +206,18 @@ requires-python = ">=3.8"
 """
 
 
-def test_check_python_support_single_eol_raises(path_with_cache: tuple[Path, Path]) -> None:
-    base_path, cache_path = path_with_cache
+def test_check_python_support_single_eol_raises(path_with_caches: tuple[Path, Path, Path]) -> None:
+    base_path, cycle_cache_path, eol_versions_cache_path = path_with_caches
     pyproject = base_path / "pyproject.toml"
     pyproject.write_text(SAMPLE_PYPROJECT_SINGLE_EOL)
 
     with time_machine.travel(dt.date(year=2025, month=5, day=1)):
         with pytest.raises(EOLPythonError) as e:
-            check_python_support(pyproject, cache_json=cache_path)
+            check_python_support(
+                pyproject,
+                cycle_cache_json=cycle_cache_path,
+                eol_versions_cache_json=eol_versions_cache_path,
+            )
 
     assert str(e.value).endswith("3.8")
 
@@ -185,14 +228,20 @@ requires-python = ">=3.11"
 """
 
 
-def test_check_python_support_single_eol_raises_by_date(path_with_cache: tuple[Path, Path]) -> None:
-    base_path, cache_path = path_with_cache
+def test_check_python_support_single_eol_raises_by_date(
+    path_with_caches: tuple[Path, Path, Path],
+) -> None:
+    base_path, cycle_cache_path, eol_versions_cache_path = path_with_caches
     pyproject = base_path / "pyproject.toml"
     pyproject.write_text(SAMPLE_PYPROJECT_SINGLE_EOL_BY_DATE)
 
     with time_machine.travel(dt.date(year=2031, month=11, day=1)):
         with pytest.raises(EOLPythonError) as e:
-            check_python_support(pyproject, cache_json=cache_path)
+            check_python_support(
+                pyproject,
+                cycle_cache_json=cycle_cache_path,
+                eol_versions_cache_json=eol_versions_cache_path,
+            )
 
     assert str(e.value).endswith("3.14")
 
@@ -203,13 +252,64 @@ requires-python = ">=3.7"
 """
 
 
-def test_check_python_support_multi_eol_raises(path_with_cache: tuple[Path, Path]) -> None:
-    base_path, cache_path = path_with_cache
+def test_check_python_support_multi_eol_raises(path_with_caches: tuple[Path, Path, Path]) -> None:
+    base_path, cycle_cache_path, eol_versions_cache_path = path_with_caches
     pyproject = base_path / "pyproject.toml"
     pyproject.write_text(SAMPLE_PYPROJECT_MULTI_EOL)
 
     with time_machine.travel(dt.date(year=2025, month=5, day=1)):
         with pytest.raises(EOLPythonError) as e:
-            check_python_support(pyproject, cache_json=cache_path)
+            check_python_support(
+                pyproject,
+                cycle_cache_json=cycle_cache_path,
+                eol_versions_cache_json=eol_versions_cache_path,
+            )
 
     assert str(e.value).endswith("3.7, 3.8")
+
+
+def test_check_cached_python_support_no_eol(path_with_caches: tuple[Path, Path, Path]) -> None:
+    base_path, cycle_cache_path, eol_versions_cache_path = path_with_caches
+    pyproject = base_path / "pyproject.toml"
+    pyproject.write_text(SAMPLE_PYPROJECT_NO_EOL)
+
+    check_python_support(
+        pyproject,
+        cycle_cache_json=cycle_cache_path,
+        eol_versions_cache_json=eol_versions_cache_path,
+        cached=True,
+    )
+
+
+def test_check_cached_python_support_single_eol_raises(
+    path_with_caches: tuple[Path, Path, Path],
+) -> None:
+    base_path, cycle_cache_path, eol_versions_cache_path = path_with_caches
+    pyproject = base_path / "pyproject.toml"
+    pyproject.write_text(SAMPLE_PYPROJECT_SINGLE_EOL)
+
+    with pytest.raises(EOLPythonError) as e:
+        check_python_support(
+            pyproject,
+            cycle_cache_json=cycle_cache_path,
+            eol_versions_cache_json=eol_versions_cache_path,
+            cached=True,
+        )
+
+    assert str(e.value).endswith("3.8")
+
+
+def test_check_cached_python_support_single_eol_no_raises_by_date(
+    path_with_caches: tuple[Path, Path, Path],
+) -> None:
+    base_path, cycle_cache_path, eol_versions_cache_path = path_with_caches
+    pyproject = base_path / "pyproject.toml"
+    pyproject.write_text(SAMPLE_PYPROJECT_SINGLE_EOL_BY_DATE)
+
+    with time_machine.travel(dt.date(year=2031, month=11, day=1)):
+        check_python_support(
+            pyproject,
+            cycle_cache_json=cycle_cache_path,
+            eol_versions_cache_json=eol_versions_cache_path,
+            cached=True,
+        )

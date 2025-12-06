@@ -108,9 +108,11 @@ def _get_cached_release_cycle(cache_json: Path) -> list[PythonRelease]:
     )
 
 
-def get_cached_eol_versions() -> abc.Iterator[PythonRelease]:
+def get_cached_eol_versions(
+    eol_versions_cache_json: Path = CACHED_EOL_VERSIONS,
+) -> abc.Iterator[PythonRelease]:
     """Parse the locally cached EOL Python versions into `PythonRelease` instance(s)."""
-    with CACHED_EOL_VERSIONS.open("r", encoding="utf-8") as f:
+    with eol_versions_cache_json.open("r", encoding="utf-8") as f:
         contents = json.load(f)
 
     return (PythonRelease.from_json(v, m) for v, m in contents.items())
@@ -127,7 +129,11 @@ def get_eol_versions(cache_json: Path = CACHED_RELEASE_CYCLE) -> abc.Iterator[Py
 
 
 def check_python_support(
-    toml_file: Path, *, cached: bool = False, cache_json: Path = CACHED_RELEASE_CYCLE
+    toml_file: Path,
+    *,
+    cached: bool = False,
+    cycle_cache_json: Path = CACHED_RELEASE_CYCLE,
+    eol_versions_cache_json: Path = CACHED_EOL_VERSIONS,
 ) -> None:
     """
     Check the input TOML's `requires-python` for overlap with EOL Python version(s).
@@ -145,9 +151,9 @@ def check_python_support(
     package_spec = specifiers.SpecifierSet(requires_python)
 
     if cached:
-        eol_versions = get_cached_eol_versions()
+        eol_versions = get_cached_eol_versions(eol_versions_cache_json)
     else:
-        eol_versions = get_eol_versions(cache_json)
+        eol_versions = get_eol_versions(cycle_cache_json)
     eol_supported = [version for version in eol_versions if version.python_ver in package_spec]
 
     if eol_supported:
