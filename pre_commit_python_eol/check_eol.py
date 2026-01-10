@@ -4,7 +4,6 @@ import argparse
 import datetime as dt
 import json
 import sys
-import tomllib
 import typing as t
 from collections import abc
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from enum import StrEnum
 from operator import attrgetter
 from pathlib import Path
 
+import tomlkit
 from packaging import specifiers, version
 
 CACHED_RELEASE_CYCLE = Path(__file__).parent / "cached_release_cycle.json"
@@ -21,6 +21,13 @@ class EOLPythonError(Exception): ...  # noqa: D101
 
 
 class RequiresPythonNotFoundError(Exception): ...  # noqa: D101
+
+
+class UnsupportedFixError(Exception):  # noqa: D101
+    def __init__(self):
+        super().__init__(
+            "Fixing EOL Python versions is only supported for simple '>=3.x' specifiers."
+        )
 
 
 class ReleasePhase(StrEnum):
@@ -117,8 +124,27 @@ def _get_cached_release_cycle(cache_json: Path) -> list[PythonRelease]:
     )
 
 
+def get_fixed_spec(specs: specifiers.SpecifierSet, eol_supported: list[PythonRelease]) -> str:
+    """Fix a specifier to exclude EOL versions."""
+    # Only supports a single specifier
+    if not len(specs) == 1:
+        raise UnsupportedFixError()
+    spec = list(specs)[0]
+    # Only supports >= operator
+    if not spec.operator == ">=":
+        raise UnsupportedFixError()
+
+    cutoff = eol_supported[-1].python_ver
+    # Only supports >=x.y
+    new_minimum = f"{cutoff.major}.{cutoff.minor + 1}"
+    return f">={new_minimum}"
+
+
 def check_python_support(
-    toml_file: Path, cache_json: Path = CACHED_RELEASE_CYCLE, use_system_date: bool = True
+    toml_file: Path,
+    cache_json: Path = CACHED_RELEASE_CYCLE,
+    use_system_date: bool = True,
+    fix: bool = False,
 ) -> None:
     """
     Check the input TOML's `requires-python` for overlap with EOL Python version(s).
@@ -130,7 +156,7 @@ def check_python_support(
     are not explicitly EOL.
     """
     with toml_file.open("rb") as f:
-        contents = tomllib.load(f)
+        contents = tomlkit.load(f)
 
     requires_python = contents.get("project", {}).get("requires-python", None)
     if not requires_python:
@@ -143,22 +169,32 @@ def check_python_support(
         r for r in release_cycle if ((r.python_ver in package_spec) and r.is_eol(use_system_date))
     ]
 
-    if eol_supported:
-        eol_supported.sort(key=attrgetter("python_ver"))  # Sort ascending for error msg generation
-        joined_vers = ", ".join(str(r.python_ver) for r in eol_supported)
-        raise EOLPythonError(f"EOL Python support found: {joined_vers}")
+    if not eol_supported:
+        return
+
+    eol_supported.sort(key=attrgetter("python_ver"))  # Sort ascending for error msg generation
+
+    if fix:
+        new_spec = get_fixed_spec(package_spec, eol_supported)
+        contents["project"]["requires-python"] = new_spec
+        with toml_file.open("w") as f:
+            tomlkit.dump(contents, f)
+
+    joined_vers = ", ".join(str(r.python_ver) for r in eol_supported)
+    raise EOLPythonError(f"EOL Python support found: {joined_vers}")
 
 
 def main(argv: abc.Sequence[str] | None = None) -> int:  # noqa: D103
     parser = argparse.ArgumentParser()
     parser.add_argument("filenames", nargs="*", type=Path)
     parser.add_argument("--cache_only", action="store_true")
+    parser.add_argument("--fix", action="store_true")
     args = parser.parse_args(argv)
 
     ec = 0
     for file in args.filenames:
         try:
-            check_python_support(file, use_system_date=(not args.cache_only))
+            check_python_support(file, use_system_date=(not args.cache_only), fix=args.fix)
         except EOLPythonError as e:
             print(f"{file}: {e}")
             ec = 1

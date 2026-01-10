@@ -31,5 +31,14 @@ Check `requires-python` against the current Python lifecycle & fail if an EOL ve
 ### `check-eol-cached`
 Check `requires-python` against the current Python lifecycle & fail if an EOL version is included; this hook utilizes only the cached release cycle information.
 
+## Autofixing
+
+To enable autofixing for simple `>=3.x` versions, add:
+
+```yaml
+    - id: check-eol  # or check-eol-cached
+      args: [ "--fix" ]
+```
+
 ## Python Version Support
 Starting with Python 3.11, a best attempt is made to support Python versions until they reach EOL, after which support will be formally dropped by the next minor or major release of this package, whichever arrives first. The status of Python versions can be found [here](https://devguide.python.org/versions/).

@@ -10,6 +10,7 @@ from pre_commit_python_eol.check_eol import (
     PythonRelease,
     ReleasePhase,
     RequiresPythonNotFoundError,
+    UnsupportedFixError,
     _get_cached_release_cycle,
     _parse_eol_date,
     check_python_support,
@@ -146,6 +147,21 @@ def test_check_python_no_version_spec_raises(path_with_cache: tuple[Path, Path])
         check_python_support(pyproject, cache_json=cache_path)
 
 
+SAMPLE_PYPROJECT_UNSUPPORTED_FIX = """\
+[project]
+requires-python = ">3.7"
+"""
+
+
+def test_check_python_unsupported_fix_raises(path_with_cache: tuple[Path, Path]) -> None:
+    base_path, cache_path = path_with_cache
+    pyproject = base_path / "pyproject.toml"
+    pyproject.write_text(SAMPLE_PYPROJECT_UNSUPPORTED_FIX)
+
+    with pytest.raises(UnsupportedFixError):
+        check_python_support(pyproject, cache_json=cache_path, fix=True)
+
+
 SAMPLE_PYPROJECT_NO_EOL = """\
 [project]
 requires-python = ">=3.11"
@@ -159,6 +175,17 @@ def test_check_python_support_no_eol(path_with_cache: tuple[Path, Path]) -> None
 
     with time_machine.travel(dt.date(year=2025, month=5, day=1)):
         check_python_support(pyproject, cache_json=cache_path)
+
+
+def test_check_python_support_no_eol_fix(path_with_cache: tuple[Path, Path]) -> None:
+    base_path, cache_path = path_with_cache
+    pyproject = base_path / "pyproject.toml"
+    pyproject.write_text(SAMPLE_PYPROJECT_NO_EOL)
+
+    with time_machine.travel(dt.date(year=2025, month=5, day=1)):
+        check_python_support(pyproject, cache_json=cache_path, fix=True)
+
+    assert pyproject.read_text() == SAMPLE_PYPROJECT_NO_EOL
 
 
 SAMPLE_PYPROJECT_SINGLE_EOL = """\
@@ -179,6 +206,26 @@ def test_check_python_support_single_eol_raises(path_with_cache: tuple[Path, Pat
     assert str(e.value).endswith("3.8")
 
 
+SAMPLE_PYPROJECT_SINGLE_EOL_FIXED = """\
+[project]
+requires-python = ">=3.9"
+"""
+
+
+def test_check_python_support_single_eol_raises_fix(path_with_cache: tuple[Path, Path]) -> None:
+    base_path, cache_path = path_with_cache
+    pyproject = base_path / "pyproject.toml"
+    pyproject.write_text(SAMPLE_PYPROJECT_SINGLE_EOL)
+
+    with time_machine.travel(dt.date(year=2025, month=5, day=1)):
+        with pytest.raises(EOLPythonError) as e:
+            check_python_support(pyproject, cache_json=cache_path, fix=True)
+
+    assert str(e.value).endswith("3.8")
+
+    assert pyproject.read_text() == SAMPLE_PYPROJECT_SINGLE_EOL_FIXED
+
+
 SAMPLE_PYPROJECT_SINGLE_EOL_BY_DATE = """\
 [project]
 requires-python = ">=3.11"
@@ -197,6 +244,28 @@ def test_check_python_support_single_eol_raises_by_date(path_with_cache: tuple[P
     assert str(e.value).endswith("3.14")
 
 
+SAMPLE_PYPROJECT_SINGLE_EOL_BY_DATE_FIXED = """\
+[project]
+requires-python = ">=3.15"
+"""
+
+
+def test_check_python_support_single_eol_raises_by_date_fix(
+    path_with_cache: tuple[Path, Path],
+) -> None:
+    base_path, cache_path = path_with_cache
+    pyproject = base_path / "pyproject.toml"
+    pyproject.write_text(SAMPLE_PYPROJECT_SINGLE_EOL_BY_DATE)
+
+    with time_machine.travel(dt.date(year=2031, month=11, day=1)):
+        with pytest.raises(EOLPythonError) as e:
+            check_python_support(pyproject, cache_json=cache_path, fix=True)
+
+    assert str(e.value).endswith("3.14")
+
+    assert pyproject.read_text() == SAMPLE_PYPROJECT_SINGLE_EOL_BY_DATE_FIXED
+
+
 SAMPLE_PYPROJECT_MULTI_EOL = """\
 [project]
 requires-python = ">=3.7"
@@ -213,6 +282,26 @@ def test_check_python_support_multi_eol_raises(path_with_cache: tuple[Path, Path
             check_python_support(pyproject, cache_json=cache_path)
 
     assert str(e.value).endswith("3.7, 3.8")
+
+
+SAMPLE_PYPROJECT_MULTI_EOL_FIXED = """\
+[project]
+requires-python = ">=3.9"
+"""
+
+
+def test_check_python_support_multi_eol_raises_fix(path_with_cache: tuple[Path, Path]) -> None:
+    base_path, cache_path = path_with_cache
+    pyproject = base_path / "pyproject.toml"
+    pyproject.write_text(SAMPLE_PYPROJECT_MULTI_EOL)
+
+    with time_machine.travel(dt.date(year=2025, month=5, day=1)):
+        with pytest.raises(EOLPythonError) as e:
+            check_python_support(pyproject, cache_json=cache_path, fix=True)
+
+    assert str(e.value).endswith("3.7, 3.8")
+
+    assert pyproject.read_text() == SAMPLE_PYPROJECT_MULTI_EOL_FIXED
 
 
 def test_check_cached_python_support_single_eol_no_raises_by_date(
